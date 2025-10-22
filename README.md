@@ -1,6 +1,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 # 🔊 AcousticLog — Real-time Noise Monitor
+[![GitHub release](https://img.shields.io/github/v/release/AndreyBorisovichKoval/AcousticLog)](https://github.com/AndreyBorisovichKoval/AcousticLog/releases/latest)
 
 **AcousticLog** — это приложение для **непрерывного мониторинга уровня шума в реальном времени**, 
 с записью результатов в CSV-файлы и сохранением аудиофрагментов при превышении заданных порогов.
