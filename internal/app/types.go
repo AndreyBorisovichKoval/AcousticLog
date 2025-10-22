@@ -102,4 +102,6 @@ type wavTask struct {
 	when time.Time
 	rate int
 	pcm  []byte
+	kind string           // EXCEEDED | IMPULSE
+	after func(string)    // callback: receives saved WAV full path
 }

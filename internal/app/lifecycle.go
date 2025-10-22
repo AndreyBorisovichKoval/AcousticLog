@@ -249,11 +249,15 @@ func (a *App) startWorkers() {
 		go func() {
 			defer a.wg.Done()
 			for task := range a.chWAV {
-				if _, err := iofs.SaveWAV(a.outDirWAV, task.when, task.rate, task.pcm); err != nil {
+				path, err := iofs.SaveWAVKind(a.outDirWAV, task.when, task.rate, task.pcm, task.kind)
+				if err != nil {
 					fmt.Printf("%s[WAV error] %v%s\n", sysx.ClrRed, err, sysx.ClrReset)
 					atomic.AddUint64(&a.stats.WAVErrors, 1)
-				} else {
-					atomic.AddUint64(&a.stats.WAVFilesSaved, 1)
+					continue
+				}
+				atomic.AddUint64(&a.stats.WAVFilesSaved, 1)
+				if task.after != nil {
+					task.after(path)
 				}
 			}
 		}()
@@ -317,6 +321,14 @@ func (a *App) process(b *buffer) {
 		color = sysx.ClrYellow
 		status = "NEAR"
 	}
+	// Определяем папку события для WAV
+	kind := ""
+	switch status {
+	case "EXCEEDED":
+		kind = "EXCEEDED"
+	case "IMPULSE":
+		kind = "IMPULSE"
+	}
 
 	freeMB := a.diskFreeMB
 	canSaveWAV := freeMB > a.diskWarnMB
@@ -324,8 +336,7 @@ func (a *App) process(b *buffer) {
 	var wavFilename string
 	if exceeded || impulse {
 		if canSaveWAV {
-			wavFilename = filepath.Join(a.outDirWAV, now.Format("15"),
-				fmt.Sprintf("noise_%s.wav", now.Format("20060102_150405.000")))
+			wavFilename = filepath.Join(a.outDirWAV, now.Format("15"), kind, fmt.Sprintf("noise_%s.wav", now.Format("20060102_150405.000")))
 		} else {
 			wavFilename = fmt.Sprintf("DISK_LOW_SPACE_%.1fMB", float64(freeMB))
 		}
@@ -370,7 +381,7 @@ func (a *App) process(b *buffer) {
 
 	if (exceeded || impulse) && canSaveWAV {
 		select {
-		case a.chWAV <- wavTask{when: now, rate: int(a.Fmt.NSamplesPerSec), pcm: append([]byte(nil), raw...)}:
+		case a.chWAV <- wavTask{when: now, rate: int(a.Fmt.NSamplesPerSec), pcm: append([]byte(nil), raw...), kind: kind}:
 		default:
 			// дроп без блокировки
 		}
