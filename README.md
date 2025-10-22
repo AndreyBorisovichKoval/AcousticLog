@@ -1,3 +1,5 @@
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 # 🔊 AcousticLog — Real-time Noise Monitor
 
 **AcousticLog** — это приложение для **непрерывного мониторинга уровня шума в реальном времени**, 
