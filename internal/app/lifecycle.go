@@ -1,5 +1,3 @@
-// C:\_Projects_Go\AcousticLog\internal\app\lifecycle.go
-
 package app
 
 import (
@@ -26,6 +24,14 @@ const (
 	DefaultDiskCheckInterval = 5 * time.Minute
 	ShutdownTimeout          = 10 * time.Second
 )
+
+// mergeInfo — сводка по часовому мерджу для вывода в конце сессии.
+type mergeInfo struct {
+	Hour    string
+	OutPath string
+	Clips   int
+	Err     error
+}
 
 func Run(cfg *Config) error {
 	// дать доступ ParseFlags к реальным os.Args
@@ -142,6 +148,9 @@ func Run(cfg *Config) error {
 	// Workers
 	app.startWorkers()
 
+	// Резюмирование незавершённых мерджей при старте
+	ResumePendingMerges(context.Background(), app.cfg, app.outDirWAV)
+
 	// UI header
 	if !app.quiet {
 		app.printLiveHeader()
@@ -155,11 +164,20 @@ func Run(cfg *Config) error {
 	diskCheckTicker := time.NewTicker(DefaultDiskCheckInterval)
 	defer diskCheckTicker.Stop()
 
+	// Часовой тикер + фиксация текущего часа
+	lastHour := time.Now().In(app.loc).Format("15")
+	hourTicker := time.NewTicker(10 * time.Second)
+	defer hourTicker.Stop()
+
+	// Сводка мерджей за сессию (по часам)
+	var mergedHours []mergeInfo
+
 	// Auto-stop timer (только если не /auto)
 	var timer *time.Timer
 	if !cfg.AutoMode {
 		if dl, err := nextStopAt(loc, cfg.StopAtHHMM); err == nil {
-			timer = time.NewTimer(time.Until(dl))
+			timer = new(time.Timer)
+			*timer = *time.NewTimer(time.Until(dl))
 			defer timer.Stop()
 		}
 	}
@@ -189,12 +207,35 @@ loop:
 			app.updateDiskStatus()
 			if app.diskFreeMB < app.diskStopMB {
 				now := time.Now().In(app.loc)
-				record := []string{now.Format("2006-01-02 15:04:05.000"), "SYSTEM", "0.00", "0.00", "0.0",
-					fmt.Sprintf("FATAL_DISK_SPACE_LEFT_%.1fMB", float64(app.diskFreeMB)), "NO_WAV"}
+				record := []string{
+					now.Format("2006-01-02 15:04:05.000"),
+					"SYSTEM", "0.00", "0.00", "0.0",
+					fmt.Sprintf("FATAL_DISK_SPACE_LEFT_%.1fMB", float64(app.diskFreeMB)),
+					"NO_WAV",
+				}
 				_ = iofs.SafeWrite(app.csvWriter, record)
 				_ = iofs.SafeWrite(app.csvAllWriter, record)
-				fmt.Printf("\n%s[FATAL ERROR] КРИТИЧЕСКИ МАЛО МЕСТА (%.1f МБ). Аварийное завершение...%s\n", sysx.ClrRed, float64(app.diskFreeMB), sysx.ClrReset)
+				fmt.Printf("\n%s[FATAL ERROR] КРИТИЧЕСКИ МАЛО МЕСТА (%.1f МБ). Аварийное завершение...%s\n",
+					sysx.ClrRed, float64(app.diskFreeMB), sysx.ClrReset)
 				break loop
+			}
+
+		// Автосклейка завершившегося часа + сводка
+		case <-hourTicker.C:
+			now := time.Now().In(app.loc)
+			h := now.Format("15")
+			if h != lastHour {
+				prev := lastHour
+				lastHour = h
+				if !app.cfg.NoHourlyMerge {
+					out, n, err := StartHourlyMerge(context.Background(), app.cfg, app.outDirWAV, prev)
+					mergedHours = append(mergedHours, mergeInfo{
+						Hour:    prev,
+						OutPath: out,
+						Clips:   n,
+						Err:     err,
+					})
+				}
 			}
 
 		case <-intCh:
@@ -214,8 +255,22 @@ loop:
 		}
 	}
 
-	app.shutdown(ShutdownTimeout)
-	<-app.shutdownCh
+	// Синхронный мердж текущего часа на завершение + сводка
+	if !app.cfg.NoHourlyMerge {
+		now := time.Now().In(app.loc)
+		hh := now.Format("15")
+		out, n, err := StartHourlyMerge(context.Background(), app.cfg, app.outDirWAV, hh)
+		mergedHours = append(mergedHours, mergeInfo{
+			Hour:    hh,
+			OutPath: out,
+			Clips:   n,
+			Err:     err,
+		})
+	}
+
+	a := app
+	a.shutdownWithStats(ShutdownTimeout, mergedHours)
+	<-a.shutdownCh
 	return nil
 }
 
@@ -392,10 +447,8 @@ func (a *App) process(b *buffer) {
 	a.prevInit = true
 }
 
-func (a *App) shutdown(timeout time.Duration) {
-	// graceful shutdown: merge current hour (WAV)
-	if !a.cfg.NoHourlyMerge { StartHourlyMergeAsync(context.Background(), a.cfg, a.outDirWAV, time.Now().Format("15")) }
-
+// shutdownWithStats — завершение + расширенная сводка мерджей по часам (кол-во клипов и размер).
+func (a *App) shutdownWithStats(timeout time.Duration, mergedHours []mergeInfo) {
 	if a.isShutting.Swap(true) {
 		return
 	}
@@ -428,8 +481,41 @@ func (a *App) shutdown(timeout time.Duration) {
 		a.csvAllWriter.Flush()
 	}
 
+	// Базовая статистика
 	a.printStats()
 	fmt.Printf("📄 CSV(events): %s\n📄 CSV(all):    %s\n", a.csvPath, a.csvAllPath)
+
+	// Новая секция: сводка по часовым мерджам (по ходу сессии + финальный)
+	if len(mergedHours) > 0 {
+		fmt.Printf("\n%s🧩 Hourly merge summary:%s\n", sysx.ClrCyan, sysx.ClrReset)
+		totalClips := 0
+		var totalBytes int64
+		totalOk := 0
+
+		for _, mi := range mergedHours {
+			if mi.Err != nil {
+				fmt.Printf(" - %s: ERROR: %v\n", mi.Hour, mi.Err)
+				continue
+			}
+			base := "(no output)"
+			sizeMB := 0.0
+			if mi.OutPath != "" {
+				if fi, err := os.Stat(mi.OutPath); err == nil {
+					totalBytes += fi.Size()
+					sizeMB = float64(fi.Size()) / (1024.0 * 1024.0)
+				}
+				base = filepath.Base(mi.OutPath)
+			}
+			fmt.Printf(" - %s: %d clips → %s (%.2f MB)\n", mi.Hour, mi.Clips, base, sizeMB)
+			totalClips += mi.Clips
+			totalOk++
+		}
+		fmt.Printf("Всего часов склеено: %d | Всего фрагментов объединено: %d | Суммарный объём: %.2f MB\n",
+			totalOk, totalClips, float64(totalBytes)/(1024.0*1024.0))
+	} else {
+		fmt.Println("\n🧩 Hourly merge summary: нет выполненных склеек за сессию")
+	}
+
 	if a.shutdownCh == nil {
 		a.shutdownCh = make(chan struct{})
 	}
