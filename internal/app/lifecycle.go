@@ -3,6 +3,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"math"
@@ -392,6 +393,9 @@ func (a *App) process(b *buffer) {
 }
 
 func (a *App) shutdown(timeout time.Duration) {
+	// graceful shutdown: merge current hour (WAV)
+	if !a.cfg.NoHourlyMerge { StartHourlyMergeAsync(context.Background(), a.cfg, a.outDirWAV, time.Now().Format("15")) }
+
 	if a.isShutting.Swap(true) {
 		return
 	}

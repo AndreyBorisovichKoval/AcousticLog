@@ -8,6 +8,8 @@ import (
 )
 
 type Config struct {
+	NoHourlyMerge bool
+	HourlyMergeOut string
 	// thresholds & logic
 	SPLOffset    float64
 	DayLimit     float64
@@ -54,7 +56,7 @@ func ParseFlags() (*Config, error) {
 		stripToken("/quiet")
 	}
 
-	spl := flag.Float64("spl-offset", 90, "")
+	spl := flag.Float64("spl-offset", 114, "")
 	day := flag.Float64("day-limit", 55, "")
 	night := flag.Float64("night-limit", 45, "")
 	dayStart := flag.String("day-start", "07:00", "")
@@ -72,8 +74,18 @@ func ParseFlags() (*Config, error) {
 	appendL := flag.Bool("append-live", false, "")
 	csvDelimStr := flag.String("csv-delim", ";", "")
 	wavDepth := flag.Int("live-wav-depth", 3, "")
+	consolePage := flag.Bool("console-page", false, "")
+	consolePageSize := flag.Int("console-page-size", 70, "")
+	noHourly := flag.Bool("no-hourly-merge", false, "")
+	hourlyOut := flag.String("hourly-merge-out", "_Merget_Exceeded", "")
 
 	flag.Parse()
+	// map console-page to live behavior
+	if *consolePage {
+		*noClear = false
+		if consolePageSize != nil && *consolePageSize > 0 { *lines = *consolePageSize } else { *lines = 70 }
+	} else { *noClear = true }
+	if *appendL { *noClear = true }
 	if *appendL {
 		*noClear = true
 	}
@@ -103,5 +115,7 @@ func ParseFlags() (*Config, error) {
 		LiveLines: *lines, LiveNoClear: *noClear, LiveWavDepth: *wavDepth,
 		AutoMode: autoMode, QuietMode: quiet,
 		CSVDelim: delim,
+		NoHourlyMerge: *noHourly,
+		HourlyMergeOut: *hourlyOut,
 	}, nil
 }

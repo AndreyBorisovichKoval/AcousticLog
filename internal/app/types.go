@@ -23,6 +23,7 @@ type AppStats struct {
 }
 
 type App struct {
+	prevHour string
 	cfg *Config
 
 	// audio
