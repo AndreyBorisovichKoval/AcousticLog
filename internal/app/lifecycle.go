@@ -228,13 +228,30 @@ loop:
 				prev := lastHour
 				lastHour = h
 				if !app.cfg.NoHourlyMerge {
-					out, n, err := StartHourlyMerge(context.Background(), app.cfg, app.outDirWAV, prev)
-					mergedHours = append(mergedHours, mergeInfo{
-						Hour:    prev,
-						OutPath: out,
-						Clips:   n,
-						Err:     err,
-					})
+					// Определяем переменные заранее, чтобы они были видны во всём блоке...
+					var (
+						out string
+						n   int
+						err error
+					)
+
+					// Всегда «только что завершившийся» час...
+					// mergeTime := time.Now().In(app.loc).Add(-1 * time.Hour)
+					mergeTime := now.Add(-1 * time.Hour)
+					dayStr := mergeTime.Format("2006-01-02")
+
+					// Папка именно того дня, к которому относится prev...
+					_, _, dayWavDir, errDir := iofs.EnsureOutDirForDate(dayStr)
+					if errDir != nil {
+						mergedHours = append(mergedHours, mergeInfo{
+							Hour: prev, Err: fmt.Errorf("ensure out dir for %s: %w", dayStr, errDir),
+						})
+					} else {
+						out, n, err = StartHourlyMerge(context.Background(), app.cfg, dayWavDir, prev)
+						mergedHours = append(mergedHours, mergeInfo{
+							Hour: prev, OutPath: out, Clips: n, Err: err,
+						})
+					}
 				}
 			}
 

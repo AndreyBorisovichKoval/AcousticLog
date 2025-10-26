@@ -152,7 +152,7 @@ func writeWAV(out *os.File, fmtChunk []byte, totalData uint32, concat func(w io.
 func MergeHour(ctx context.Context, dayWavDir, hour string, opts MergeOptions) (string, error) {
 	outDir := opts.OutDir
 	if outDir == "" {
-		outDir = filepath.Join(dayWavDir, "_Merget_Exceeded")
+		outDir = filepath.Join(dayWavDir, "_Merged_Exceeded")
 	}
 	if err := os.MkdirAll(outDir, 0755); err != nil {
 		return "", err
