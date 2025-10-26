@@ -39,8 +39,6 @@ func Run(cfg *Config) error {
 	_osArgs = func() []string { return orig }
 	_setOsArgs = func(v []string) { os.Args = v }
 
-	// sysx.EnableANSI() удалено, т.к. уже вызвано в build.PrintHeader
-
 	// Time / TZ
 	loc, err := time.LoadLocation(cfg.Timezone)
 	if err != nil {
@@ -236,7 +234,6 @@ loop:
 					)
 
 					// Всегда «только что завершившийся» час...
-					// mergeTime := time.Now().In(app.loc).Add(-1 * time.Hour)
 					mergeTime := now.Add(-1 * time.Hour)
 					dayStr := mergeTime.Format("2006-01-02")
 
@@ -276,13 +273,19 @@ loop:
 	if !app.cfg.NoHourlyMerge {
 		now := time.Now().In(app.loc)
 		hh := now.Format("15")
-		out, n, err := StartHourlyMerge(context.Background(), app.cfg, app.outDirWAV, hh)
-		mergedHours = append(mergedHours, mergeInfo{
-			Hour:    hh,
-			OutPath: out,
-			Clips:   n,
-			Err:     err,
-		})
+
+		// Жёстко берём каталог по текущей дате завершения; учитываем ошибку
+		_, _, dayWavDir, errDir := iofs.EnsureOutDirForDate(now.Format("2006-01-02"))
+		if errDir != nil {
+			mergedHours = append(mergedHours, mergeInfo{
+				Hour: hh, Err: fmt.Errorf("ensure out dir for %s: %w", now.Format("2006-01-02"), errDir),
+			})
+		} else {
+			out, n, err := StartHourlyMerge(context.Background(), app.cfg, dayWavDir, hh)
+			mergedHours = append(mergedHours, mergeInfo{
+				Hour: hh, OutPath: out, Clips: n, Err: err,
+			})
+		}
 	}
 
 	a := app
